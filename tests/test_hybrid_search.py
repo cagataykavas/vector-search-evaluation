@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 import app.api as api_module
+from search.engine import SearchHit, reciprocal_rank_fusion
 
 
 def documents() -> list[dict]:
@@ -79,3 +80,19 @@ def test_benchmark_compares_three_methods() -> None:
         assert 0 <= row["metrics"]["recall_at_k"] <= 1
         assert 0 <= row["metrics"]["mrr"] <= 1
         assert 0 <= row["metrics"]["ndcg_at_k"] <= 1
+
+
+def test_rrf_uses_source_scores_to_break_rank_ties() -> None:
+    first = [
+        SearchHit("a", 0.8, 1, "first"),
+        SearchHit("b", 0.8, 2, "first"),
+    ]
+    second = [
+        SearchHit("b", 1.0, 1, "second"),
+        SearchHit("a", 0.5, 2, "second"),
+    ]
+
+    hits = reciprocal_rank_fusion((first, second), k=2)
+
+    assert [hit.doc_id for hit in hits] == ["b", "a"]
+    assert hits[0].score == hits[1].score

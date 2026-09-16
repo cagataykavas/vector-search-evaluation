@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import log
-import re
-from typing import Iterable
 
 import numpy as np
-
 
 TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
 
@@ -124,10 +123,18 @@ def reciprocal_rank_fusion(
     constant: int = 60,
 ) -> list[SearchHit]:
     scores: defaultdict[str, float] = defaultdict(float)
+    score_tiebreakers: defaultdict[str, float] = defaultdict(float)
     for ranking in rankings:
-        for hit in ranking:
+        materialized = list(ranking)
+        scale = max((abs(hit.score) for hit in materialized), default=0.0)
+        for hit in materialized:
             scores[hit.doc_id] += 1.0 / (constant + hit.rank)
-    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:k]
+            if scale > 0:
+                score_tiebreakers[hit.doc_id] += hit.score / scale
+    ordered = sorted(
+        scores.items(),
+        key=lambda item: (-item[1], -score_tiebreakers[item[0]], item[0]),
+    )[:k]
     return [
         SearchHit(doc_id=doc_id, score=score, rank=rank, source="rrf")
         for rank, (doc_id, score) in enumerate(ordered, start=1)

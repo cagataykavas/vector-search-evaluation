@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from statistics import mean
-from typing import Iterable
 
 from evaluate import ndcg_at_k, recall_at_k, reciprocal_rank
 from search.engine import Document, HybridSearchEngine

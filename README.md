@@ -142,6 +142,34 @@ vector-search-evaluation/
 └── .github/workflows/ci.yml
 ```
 
+## Query-level regression gate
+
+Aggregate retrieval metrics can improve while a subset of queries becomes materially worse. The
+paired regression gate compares baseline and candidate rankings over exactly the same query IDs and
+qrels:
+
+```python
+from search.regression import compare_retrieval_runs
+
+report = compare_retrieval_runs(
+    baseline={"q-1": ["doc-a", "doc-b"]},
+    candidate={"q-1": ["doc-b", "doc-a"]},
+    qrels={"q-1": {"doc-a"}},
+    k=10,
+    max_regression_rate=0.10,
+    minimum_mean_ndcg_delta=0.0,
+)
+```
+
+The JSON-ready report contains per-query Recall, MRR and NDCG deltas, mean deltas, the exact
+regressed-query rate and machine-readable release reasons. Query sets must match exactly; empty
+qrels, duplicate result IDs and malformed rankings fail closed. Evidence is sorted by query ID so
+CI artifacts are deterministic.
+
+The gate does not remove qrels bias or prove online relevance. Its thresholds must be selected on a
+representative, versioned evaluation set. Production promotion should also segment results by query
+type, monitor latency and cost, and validate downstream answer quality.
+
 ## Production extensions
 
 - HNSW / FAISS / pgvector / OpenSearch adapters;

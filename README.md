@@ -70,6 +70,25 @@ The repository calculates:
 - **MRR** — how early the first relevant result appeared;
 - **NDCG@K** — ranking quality with logarithmic position discount.
 
+### Serving release gate
+
+Offline relevance gains are not production wins if the candidate violates serving latency or is
+strictly worse on both quality and speed. `search.serving_gate` evaluates paired baseline and
+candidate artifacts with:
+
+- mean NDCG@K drop tolerance;
+- absolute p95 latency and baseline-relative p95/median budgets;
+- explicit Pareto-dominance rejection;
+- minimum query and per-query timing evidence;
+- exact query/qrel pairing and fail-closed malformed-input checks;
+- deterministic per-query evidence and JSON output.
+
+Run it in CI with `python -m search.serving_gate artifact.json --require-pass`. Exit code `0`
+means accepted, `2` is a valid policy rejection and `1` identifies malformed input. Latency
+samples should come from isolated warm runs with consistent concurrency, hardware, index state,
+cache policy and network boundaries. This gate does not replace load testing, tail-latency
+analysis under saturation or online relevance measurement.
+
 ## Run the API
 
 ```bash
@@ -132,10 +151,12 @@ vector-search-evaluation/
 ├── app/
 │   └── api.py
 ├── search/
+│   ├── benchmark.py
 │   ├── engine.py
-│   └── benchmark.py
+│   └── serving_gate.py
 ├── tests/
-│   └── test_hybrid_search.py
+│   ├── test_hybrid_search.py
+│   └── test_serving_gate.py
 ├── evaluate.py
 ├── Dockerfile
 ├── pyproject.toml
@@ -151,7 +172,7 @@ vector-search-evaluation/
 - query rewriting;
 - multi-query retrieval;
 - chunking strategy evaluation;
-- latency and cost benchmarking;
+- load and cost benchmarking beyond the paired serving gate;
 - RAG answer-faithfulness evaluation after retrieval.
 
 ## Interview topics demonstrated

@@ -94,7 +94,7 @@ def _validate_run(
     indexed: dict[str, QueryMeasurement] = {}
     for row in rows:
         if not isinstance(row, QueryMeasurement):
-            raise ValueError(f"{label} rows must be QueryMeasurement instances")
+            raise TypeError(f"{label} rows must be QueryMeasurement instances")
         if (
             not isinstance(row.query_id, str)
             or not row.query_id

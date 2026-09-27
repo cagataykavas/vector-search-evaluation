@@ -11,18 +11,21 @@ def documents() -> list[dict]:
             "text": "Espresso is concentrated coffee brewed under pressure.",
             "embedding": [1.0, 0.0, 0.0],
             "metadata": {"topic": "coffee"},
+            "access": {"visibility": "public"},
         },
         {
             "doc_id": "aeropress",
             "text": "AeroPress combines immersion brewing and gentle pressure.",
             "embedding": [0.9, 0.1, 0.0],
             "metadata": {"topic": "coffee"},
+            "access": {"visibility": "public"},
         },
         {
             "doc_id": "mythology",
             "text": "Athena is associated with wisdom in Greek mythology.",
             "embedding": [0.0, 1.0, 0.0],
             "metadata": {"topic": "mythology"},
+            "access": {"visibility": "public"},
         },
     ]
 

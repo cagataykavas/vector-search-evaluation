@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 
+from search.vectors import normalize_rows
+
 
 def cosine_search(query: np.ndarray, documents: np.ndarray, k: int = 10) -> list[int]:
-    query = query / (np.linalg.norm(query) + 1e-12)
-    docs = documents / (np.linalg.norm(documents, axis=1, keepdims=True) + 1e-12)
-    scores = docs @ query
+    query = np.asarray(query, dtype=float)
+    documents = np.asarray(documents, dtype=float)
+    if query.ndim != 1 or documents.ndim != 2 or documents.shape[1] != query.size:
+        raise ValueError("query and document embedding dimensions must match")
+    query = normalize_rows(query[np.newaxis, :])[0]
+    docs = normalize_rows(documents)
+    scores = np.clip(docs @ query, -1.0, 1.0)
     return np.argsort(-scores)[:k].tolist()
 
 

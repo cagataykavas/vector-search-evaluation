@@ -8,6 +8,8 @@ from math import log
 
 import numpy as np
 
+from search.vectors import normalize_rows
+
 TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
 
 
@@ -90,10 +92,8 @@ class DenseIndex:
             dimensions = {len(document.embedding) for document in self.documents}
             if len(dimensions) != 1:
                 raise ValueError("all document embeddings must have the same dimension")
-            matrix = np.asarray([document.embedding for document in self.documents], dtype=float)
-            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-            self.matrix = matrix / np.clip(norms, 1e-12, None)
-            self.dimension = matrix.shape[1]
+            self.matrix = normalize_rows([document.embedding for document in self.documents])
+            self.dimension = self.matrix.shape[1]
         else:
             self.matrix = np.empty((0, 0), dtype=float)
             self.dimension = 0
@@ -102,8 +102,10 @@ class DenseIndex:
         query = np.asarray(list(query_embedding), dtype=float)
         if query.ndim != 1 or len(query) != self.dimension:
             raise ValueError(f"query embedding must have dimension {self.dimension}")
-        query = query / max(float(np.linalg.norm(query)), 1e-12)
-        scores = self.matrix @ query
+        if not self.documents:
+            return []
+        query = normalize_rows(query[np.newaxis, :])[0]
+        scores = np.clip(self.matrix @ query, -1.0, 1.0)
         order = np.argsort(-scores)[:k]
         return [
             SearchHit(

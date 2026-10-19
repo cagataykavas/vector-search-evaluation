@@ -56,6 +56,21 @@ A readable implementation with:
 - embedding-dimension validation;
 - top-K ranking.
 
+Serving and `evaluate.cosine_search` share scale-first float64 normalization:
+each vector is divided by its largest absolute component before computing its
+unit direction. This avoids overflowing large-vector norms and the small-vector
+score distortion caused by a fixed epsilon. Zero, non-finite and zero-dimensional
+directions are rejected instead of producing arbitrary rankings; the existing API
+maps these failures to HTTP 422. A failed reindex retains the previous index.
+Final cosine scores are clipped to `[-1, 1]` for floating-point roundoff.
+
+This is numerical correctness, not an improvement claim for semantic relevance.
+Float64 conversion can still lose source precision or reject unrepresentable
+values; normalization cannot recover information already rounded away. Encoder
+compatibility, authorization, index resource budgets and near-tie ordering remain
+separate concerns. Next, compare the same numerical contract against a native
+vector-store adapter with a pinned encoder/index revision.
+
 The service accepts embeddings rather than downloading an embedding model so the retrieval engine remains provider-independent. It can sit behind OpenAI, sentence-transformers, Vertex AI, Bedrock or any custom encoder.
 
 ### Hybrid RRF

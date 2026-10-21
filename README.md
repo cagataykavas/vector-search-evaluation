@@ -70,6 +70,13 @@ The repository calculates:
 - **MRR** — how early the first relevant result appeared;
 - **NDCG@K** — ranking quality with logarithmic position discount.
 
+### Governed query fan-out
+
+`search.fanout` executes a primary query and admitted rewrites under one deadline and concurrency
+budget, then fuses their rankings deterministically. Every variant must carry the same canonical
+tenant/principal/resource/grant scope; scope drift fails before retrieval, while traces expose only
+the scope SHA-256. See [`docs/query-fanout-runtime.md`](docs/query-fanout-runtime.md).
+
 ## Run the API
 
 ```bash
@@ -146,6 +153,7 @@ vector-search-evaluation/
 
 - HNSW / FAISS / pgvector / OpenSearch adapters;
 - metadata filters;
+- tenant/ACL-scoped query fan-out;
 - sparse learned retrieval;
 - cross-encoder reranking;
 - query rewriting;

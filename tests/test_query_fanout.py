@@ -3,17 +3,27 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from dataclasses import replace
 
 import pytest
 
 from search.engine import Document, HybridSearchEngine, SearchHit
 from search.fanout import (
+    AuthorizationScope,
     FanoutAdmissionError,
     FanoutInputError,
     FanoutPolicy,
     QueryVariant,
     hybrid_engine_retriever,
     retrieve_with_query_fanout,
+)
+
+DEFAULT_SCOPE = AuthorizationScope(
+    tenant_id="tenant-a",
+    principal_id="user-a",
+    resource_id="knowledge-base-a",
+    grants=("documents:read",),
+    policy_version="acl-v1",
 )
 
 
@@ -23,8 +33,9 @@ def variant(
     *,
     embedding: tuple[float, ...] = (1.0, 0.0),
     weight: float = 1.0,
+    scope: AuthorizationScope | None = DEFAULT_SCOPE,
 ) -> QueryVariant:
-    return QueryVariant(variant_id, text, embedding, weight)
+    return QueryVariant(variant_id, text, embedding, weight, scope)
 
 
 def hits(*doc_ids: str) -> list[SearchHit]:
@@ -316,6 +327,140 @@ def test_rejects_query_and_quorum_budgets_before_retrieval() -> None:
             )
         )
     assert not called
+
+
+def test_rejects_authorization_scope_drift_before_retrieval() -> None:
+    called = False
+
+    async def retriever(_: QueryVariant, __: int) -> list[SearchHit]:
+        nonlocal called
+        called = True
+        return []
+
+    changed_scope = replace(DEFAULT_SCOPE, tenant_id="tenant-b")
+
+    with pytest.raises(FanoutInputError, match="authorization_scope_mismatch"):
+        run(
+            retrieve_with_query_fanout(
+                [
+                    variant("primary", "one"),
+                    variant("rewrite", "two", scope=changed_scope),
+                ],
+                retriever,
+            )
+        )
+
+    assert not called
+
+
+@pytest.mark.parametrize(
+    ("scope", "code"),
+    [
+        (None, "invalid_authorization_scope"),
+        (replace(DEFAULT_SCOPE, tenant_id=""), "invalid_scope_tenant"),
+        (replace(DEFAULT_SCOPE, principal_id="bad principal"), "invalid_scope_principal"),
+        (replace(DEFAULT_SCOPE, resource_id=""), "invalid_scope_resource"),
+        (replace(DEFAULT_SCOPE, policy_version="latest policy"), "invalid_scope_policy_version"),
+        (replace(DEFAULT_SCOPE, grants=()), "invalid_scope_grants"),
+        (
+            replace(DEFAULT_SCOPE, grants=("documents:read", "documents:read")),
+            "duplicate_scope_grant",
+        ),
+        (replace(DEFAULT_SCOPE, grants=("bad grant",)), "invalid_scope_grant"),
+        (
+            replace(
+                DEFAULT_SCOPE,
+                grants=tuple(f"grant-{index}" for index in range(33)),
+            ),
+            "scope_grant_budget_exceeded",
+        ),
+        (
+            replace(
+                DEFAULT_SCOPE,
+                grants=tuple(f"g-{index:02d}-" + "a" * 120 for index in range(32)),
+            ),
+            "authorization_scope_too_large",
+        ),
+    ],
+)
+def test_rejects_malformed_authorization_scope(
+    scope: AuthorizationScope | None,
+    code: str,
+) -> None:
+    called = False
+
+    async def retriever(_: QueryVariant, __: int) -> list[SearchHit]:
+        nonlocal called
+        called = True
+        return []
+
+    with pytest.raises(FanoutInputError, match=code):
+        run(retrieve_with_query_fanout([variant("primary", "one", scope=scope)], retriever))
+
+    assert not called
+
+
+def test_scope_digest_is_order_independent_and_redacts_claims() -> None:
+    async def retriever(query: QueryVariant, _: int) -> list[SearchHit]:
+        assert query.authorization_scope is not None
+        return hits("safe")
+
+    sensitive_scope = AuthorizationScope(
+        tenant_id="tenant-secret-8271",
+        principal_id="principal-secret-8271",
+        resource_id="resource-secret-8271",
+        grants=("documents:read", "finance:read"),
+        policy_version="acl-v1",
+    )
+    reordered_scope = replace(
+        sensitive_scope,
+        grants=("finance:read", "documents:read"),
+    )
+
+    first = run(
+        retrieve_with_query_fanout(
+            [variant("primary", "one", scope=sensitive_scope)],
+            retriever,
+        )
+    )
+    reordered = run(
+        retrieve_with_query_fanout(
+            [variant("primary", "one", scope=reordered_scope)],
+            retriever,
+        )
+    )
+
+    assert first.authorization_scope_digest == reordered.authorization_scope_digest
+    assert first.request_digest == reordered.request_digest
+    assert "secret-8271" not in repr(first)
+
+
+def test_authorization_scope_changes_request_and_query_evidence_identity() -> None:
+    async def retriever(_: QueryVariant, __: int) -> list[SearchHit]:
+        return hits("safe")
+
+    first = run(
+        retrieve_with_query_fanout(
+            [variant("primary", "one")],
+            retriever,
+        )
+    )
+    changed = run(
+        retrieve_with_query_fanout(
+            [
+                variant(
+                    "primary",
+                    "one",
+                    scope=replace(DEFAULT_SCOPE, principal_id="user-b"),
+                )
+            ],
+            retriever,
+        )
+    )
+
+    assert first.authorization_scope_digest != changed.authorization_scope_digest
+    assert first.request_digest != changed.request_digest
+    assert first.evidence[0].query_digest != changed.evidence[0].query_digest
 
 
 @pytest.mark.parametrize(

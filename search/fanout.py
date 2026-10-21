@@ -14,10 +14,13 @@ from typing import Literal, Protocol
 from search.engine import HybridSearchEngine, SearchHit
 
 VARIANT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+SCOPE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 MAX_QUERY_BYTES = 4_096
 MAX_VARIANTS = 16
 MAX_CONCURRENCY = 16
 MAX_CANDIDATES = 1_000
+MAX_SCOPE_GRANTS = 32
+MAX_SCOPE_BYTES = 4_096
 
 
 class FanoutError(RuntimeError):
@@ -37,11 +40,21 @@ class FanoutAdmissionError(FanoutError):
 
 
 @dataclass(frozen=True)
+class AuthorizationScope:
+    tenant_id: str
+    principal_id: str
+    resource_id: str
+    grants: tuple[str, ...]
+    policy_version: str
+
+
+@dataclass(frozen=True)
 class QueryVariant:
     variant_id: str
     query_text: str
     query_embedding: tuple[float, ...]
     weight: float = 1.0
+    authorization_scope: AuthorizationScope | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,7 @@ class FanoutResult:
     hits: tuple[FusedHit, ...]
     evidence: tuple[QueryEvidence, ...]
     request_digest: str
+    authorization_scope_digest: str
     successful_queries: int
     failed_queries: int
     timed_out_queries: int
@@ -112,8 +126,23 @@ def _normalize_query(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-def _query_digest(variant: QueryVariant) -> str:
+def _scope_digest(scope: AuthorizationScope) -> str:
     payload = {
+        "grants": sorted(scope.grants),
+        "policy_version": scope.policy_version,
+        "principal_id": scope.principal_id,
+        "resource_id": scope.resource_id,
+        "tenant_id": scope.tenant_id,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _query_digest(variant: QueryVariant) -> str:
+    if not isinstance(variant.authorization_scope, AuthorizationScope):
+        raise FanoutInputError("invalid_authorization_scope")
+    payload = {
+        "authorization_scope_sha256": _scope_digest(variant.authorization_scope),
         "embedding": list(variant.query_embedding),
         "query_text": variant.query_text,
         "variant_id": variant.variant_id,
@@ -129,8 +158,13 @@ def _query_digest(variant: QueryVariant) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _request_digest(variants: Sequence[QueryVariant], policy: FanoutPolicy) -> str:
+def _request_digest(
+    variants: Sequence[QueryVariant],
+    policy: FanoutPolicy,
+    authorization_scope_digest: str,
+) -> str:
     payload = {
+        "authorization_scope_sha256": authorization_scope_digest,
         "policy": {
             "candidate_k": policy.candidate_k,
             "deadline_ms": policy.deadline_ms,
@@ -164,10 +198,48 @@ def _validate_policy(policy: FanoutPolicy) -> None:
         raise FanoutInputError("invalid_min_successful_queries")
 
 
+def _validate_scope(scope: AuthorizationScope | None) -> str:
+    if not isinstance(scope, AuthorizationScope):
+        raise FanoutInputError("invalid_authorization_scope")
+    for value, code in (
+        (scope.tenant_id, "invalid_scope_tenant"),
+        (scope.principal_id, "invalid_scope_principal"),
+        (scope.resource_id, "invalid_scope_resource"),
+        (scope.policy_version, "invalid_scope_policy_version"),
+    ):
+        if not isinstance(value, str) or not SCOPE_COMPONENT_RE.fullmatch(value):
+            raise FanoutInputError(code)
+    if not isinstance(scope.grants, tuple) or not scope.grants:
+        raise FanoutInputError("invalid_scope_grants")
+    if len(scope.grants) > MAX_SCOPE_GRANTS:
+        raise FanoutInputError("scope_grant_budget_exceeded")
+    if len(set(scope.grants)) != len(scope.grants):
+        raise FanoutInputError("duplicate_scope_grant")
+    if any(
+        not isinstance(grant, str) or not SCOPE_COMPONENT_RE.fullmatch(grant)
+        for grant in scope.grants
+    ):
+        raise FanoutInputError("invalid_scope_grant")
+    canonical = json.dumps(
+        {
+            "grants": sorted(scope.grants),
+            "policy_version": scope.policy_version,
+            "principal_id": scope.principal_id,
+            "resource_id": scope.resource_id,
+            "tenant_id": scope.tenant_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(canonical) > MAX_SCOPE_BYTES:
+        raise FanoutInputError("authorization_scope_too_large")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _validate_variants(
     variants: Sequence[QueryVariant],
     policy: FanoutPolicy,
-) -> tuple[QueryVariant, ...]:
+) -> tuple[tuple[QueryVariant, ...], str]:
     materialized = tuple(variants)
     if not materialized:
         raise FanoutInputError("missing_queries")
@@ -179,6 +251,7 @@ def _validate_variants(
     seen_ids: set[str] = set()
     seen_queries: set[str] = set()
     dimension: int | None = None
+    authorization_scope_digest: str | None = None
     for variant in materialized:
         if not isinstance(variant, QueryVariant):
             raise FanoutInputError("invalid_query_variant")
@@ -189,6 +262,12 @@ def _validate_variants(
         if variant.variant_id in seen_ids:
             raise FanoutInputError("duplicate_variant_id")
         seen_ids.add(variant.variant_id)
+
+        variant_scope_digest = _validate_scope(variant.authorization_scope)
+        if authorization_scope_digest is None:
+            authorization_scope_digest = variant_scope_digest
+        elif variant_scope_digest != authorization_scope_digest:
+            raise FanoutInputError("authorization_scope_mismatch")
 
         if not isinstance(variant.query_text, str) or not variant.query_text.strip():
             raise FanoutInputError("empty_query")
@@ -218,7 +297,9 @@ def _validate_variants(
         ):
             raise FanoutInputError("invalid_query_weight")
 
-    return materialized
+    if authorization_scope_digest is None:
+        raise FanoutInputError("invalid_authorization_scope")
+    return materialized, authorization_scope_digest
 
 
 def _validate_hits(hits: Iterable[SearchHit], candidate_k: int) -> tuple[SearchHit, ...]:
@@ -362,7 +443,7 @@ async def retrieve_with_query_fanout(
 
     effective_policy = policy or FanoutPolicy()
     _validate_policy(effective_policy)
-    admitted = _validate_variants(variants, effective_policy)
+    admitted, authorization_scope_digest = _validate_variants(variants, effective_policy)
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + effective_policy.deadline_ms / 1_000
@@ -416,7 +497,12 @@ async def retrieve_with_query_fanout(
     return FanoutResult(
         hits=_fuse(outcomes, effective_policy),
         evidence=evidence,
-        request_digest=_request_digest(admitted, effective_policy),
+        request_digest=_request_digest(
+            admitted,
+            effective_policy,
+            authorization_scope_digest,
+        ),
+        authorization_scope_digest=authorization_scope_digest,
         successful_queries=successful,
         failed_queries=sum(outcome.status == "error" for outcome in outcomes),
         timed_out_queries=sum(outcome.status == "timeout" for outcome in outcomes),

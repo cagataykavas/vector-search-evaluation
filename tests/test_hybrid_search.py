@@ -76,6 +76,7 @@ def test_benchmark_compares_three_methods() -> None:
     assert response.status_code == 200
     results = response.json()["results"]
     assert {row["method"] for row in results} == {"bm25", "dense", "hybrid_rrf"}
+    assert {row["relevance_mode"] for row in results} == {"binary"}
     for row in results:
         assert 0 <= row["metrics"]["recall_at_k"] <= 1
         assert 0 <= row["metrics"]["mrr"] <= 1

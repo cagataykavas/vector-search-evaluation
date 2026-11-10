@@ -68,7 +68,13 @@ The repository calculates:
 
 - **Recall@K** — how much of the known relevant set was retrieved;
 - **MRR** — how early the first relevant result appeared;
-- **NDCG@K** — ranking quality with logarithmic position discount.
+- **NDCG@K** — binary or graded ranking quality with linear relevance gains and logarithmic position discount.
+
+### Binary and graded qrels
+
+Binary qrels answer whether a document is relevant. Graded qrels additionally distinguish a highly useful passage from a marginally useful one, so NDCG rewards putting the strongest evidence first even when both rankings have identical Recall@K and MRR.
+
+Each benchmark uses exactly one relevance mode. Binary requests provide `relevant_doc_ids`; graded requests provide a `relevance_grades` mapping with finite grades from 0 through 10 and at least one positive judgment. Mixing modes in one aggregate benchmark is rejected so the result remains interpretable. The response records `relevance_mode` alongside every method.
 
 ## Run the API
 
@@ -125,6 +131,19 @@ curl -X POST http://localhost:8000/benchmark \
   }'
 ```
 
+For graded judgments, replace `relevant_doc_ids` with explicit gains:
+
+```json
+{
+  "query_id": "q-1",
+  "text": "upstream timeout",
+  "embedding": [0.88, 0.12, 0.0],
+  "relevance_grades": {"doc-1": 3, "doc-2": 1}
+}
+```
+
+The implementation uses linear gain, not `2^grade - 1`, which keeps the scale auditable and avoids making one high grade dominate by exponentiation. Grades still need a documented annotation rubric and consistent assessors; NDCG cannot establish that the judgments themselves are correct.
+
 ## Repository layout
 
 ```text
@@ -151,6 +170,7 @@ vector-search-evaluation/
 - query rewriting;
 - multi-query retrieval;
 - chunking strategy evaluation;
+- annotation agreement and adjudication for graded qrels;
 - latency and cost benchmarking;
 - RAG answer-faithfulness evaluation after retrieval.
 

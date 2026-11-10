@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from search.benchmark import QueryCase, benchmark
 from search.engine import Document, HybridSearchEngine
+from search.qrels import audit_qrels
 
 
 class DocumentInput(BaseModel):
@@ -99,17 +100,24 @@ def hybrid_search(request: SearchRequest) -> dict:
 @app.post("/benchmark")
 def run_benchmark(request: BenchmarkRequest) -> dict:
     search_engine = _engine()
-    queries = [
-        QueryCase(
-            query_id=row.query_id,
-            text=row.text,
-            embedding=tuple(row.embedding),
-            relevant_doc_ids=frozenset(row.relevant_doc_ids),
-        )
-        for row in request.queries
-    ]
     try:
+        qrels_audit = audit_qrels(
+            search_engine.by_id,
+            ((row.query_id, row.relevant_doc_ids) for row in request.queries),
+        )
+        queries = [
+            QueryCase(
+                query_id=row.query_id,
+                text=row.text,
+                embedding=tuple(row.embedding),
+                relevant_doc_ids=frozenset(row.relevant_doc_ids),
+            )
+            for row in request.queries
+        ]
         results = benchmark(search_engine.documents, queries, k=request.k)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"results": [asdict(result) for result in results]}
+    return {
+        "qrels_audit": qrels_audit.to_dict(),
+        "results": [asdict(result) for result in results],
+    }

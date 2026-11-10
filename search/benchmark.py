@@ -6,6 +6,7 @@ from statistics import mean
 
 from evaluate import ndcg_at_k, recall_at_k, reciprocal_rank
 from search.engine import Document, HybridSearchEngine
+from search.qrels import audit_qrels
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,9 @@ class BenchmarkResult:
 
 def _metrics(rankings: list[list[str]], qrels: list[set[str]], k: int) -> RankingMetrics:
     recalls = [recall_at_k(ranking, relevant, k) for ranking, relevant in zip(rankings, qrels)]
-    reciprocal_ranks = [reciprocal_rank(ranking, relevant) for ranking, relevant in zip(rankings, qrels)]
+    reciprocal_ranks = [
+        reciprocal_rank(ranking, relevant) for ranking, relevant in zip(rankings, qrels)
+    ]
     ndcgs = [ndcg_at_k(ranking, relevant, k) for ranking, relevant in zip(rankings, qrels)]
     return RankingMetrics(
         recall_at_k=mean(recalls) if recalls else 0.0,
@@ -50,15 +53,17 @@ def benchmark(
 ) -> list[BenchmarkResult]:
     engine = HybridSearchEngine(documents)
     query_rows = list(queries)
+    audit_qrels(
+        engine.by_id,
+        ((query.query_id, query.relevant_doc_ids) for query in query_rows),
+    )
     qrels = [set(query.relevant_doc_ids) for query in query_rows]
 
     lexical_rankings = [
-        [hit.doc_id for hit in engine.bm25.search(query.text, k=k)]
-        for query in query_rows
+        [hit.doc_id for hit in engine.bm25.search(query.text, k=k)] for query in query_rows
     ]
     dense_rankings = [
-        [hit.doc_id for hit in engine.dense.search(query.embedding, k=k)]
-        for query in query_rows
+        [hit.doc_id for hit in engine.dense.search(query.embedding, k=k)] for query in query_rows
     ]
     hybrid_rankings = [
         [

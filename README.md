@@ -70,6 +70,21 @@ The repository calculates:
 - **MRR** — how early the first relevant result appeared;
 - **NDCG@K** — ranking quality with logarithmic position discount.
 
+### Qrels integrity gate
+
+Metrics are calculated only after the positive relevance judgments pass a fail-closed audit. The
+audit requires unique, bounded query and document IDs; at least one relevant document per query;
+unique judgments; and exact membership of every relevant ID in the indexed corpus. It also caps
+documents, queries and total judgments before materialization can become unbounded work.
+
+The benchmark API returns a privacy-reduced `qrels_audit` summary with corpus, query and judgment
+counts plus the share of corpus documents represented by at least one positive judgment. It does
+not expose query text, document text or identifiers in the summary.
+
+This validates structural integrity, not label correctness. Relevance judgments still require a
+documented annotation protocol, representative query sampling and inter-rater review; a perfectly
+well-formed but biased qrels set can still produce misleading metrics.
+
 ## Run the API
 
 ```bash

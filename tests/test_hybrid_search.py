@@ -74,7 +74,9 @@ def test_benchmark_compares_three_methods() -> None:
         },
     )
     assert response.status_code == 200
-    results = response.json()["results"]
+    payload = response.json()
+    assert payload["qrels_audit"]["relevance_judgments"] == 3
+    results = payload["results"]
     assert {row["method"] for row in results} == {"bm25", "dense", "hybrid_rrf"}
     for row in results:
         assert 0 <= row["metrics"]["recall_at_k"] <= 1

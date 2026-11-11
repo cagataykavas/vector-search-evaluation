@@ -9,6 +9,9 @@ description = "Dense, BM25 and hybrid retrieval engine with ranking evaluation"
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.8", "numpy>=1.26"]
 
+[project.scripts]
+qrels-annotation-audit = "search.annotation_audit:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.6"]
 

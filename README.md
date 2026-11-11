@@ -70,6 +70,41 @@ The repository calculates:
 - **MRR** — how early the first relevant result appeared;
 - **NDCG@K** — ranking quality with logarithmic position discount.
 
+### Annotation agreement gate
+
+Retrieval metrics are only as credible as their relevance labels. The bundled
+`qrels-annotation-audit` CLI checks an independently reviewed annotation matrix before those
+labels are promoted into qrels. It requires every query-document item to have exactly one grade
+from the same set of at least two assessors, then reports raw pair agreement and chance-corrected
+Fleiss' kappa.
+
+The output is deliberately privacy-reduced: it contains aggregate counts, grade distribution,
+threshold findings and a deterministic digest that binds the exact labels to `dataset_id` and
+`rubric_version`, but no query, document or assessor identifiers. Reports are written atomically.
+
+```json
+{
+  "dataset_id": "runbooks-2026-11",
+  "rubric_version": "relevance-v2",
+  "annotations": [
+    {"query_id": "q1", "document_id": "d1", "assessor_id": "a1", "grade": 3},
+    {"query_id": "q1", "document_id": "d1", "assessor_id": "a2", "grade": 3},
+    {"query_id": "q1", "document_id": "d2", "assessor_id": "a1", "grade": 1},
+    {"query_id": "q1", "document_id": "d2", "assessor_id": "a2", "grade": 1}
+  ]
+}
+```
+
+```bash
+qrels-annotation-audit annotations.json --output annotation-audit.json
+```
+
+Exit code `0` means the agreement thresholds passed, `1` means valid evidence failed the gate,
+and `2` means the input or operation was invalid. The defaults require pair agreement of at least
+`0.8` and Fleiss' kappa of at least `0.6`; both are configurable. A passing audit does not prove
+the rubric is unbiased, the query sample is representative, or the labels are factually correct.
+Assessor identifiers also cannot prove that the reviews were operationally independent.
+
 ## Run the API
 
 ```bash
@@ -133,9 +168,11 @@ vector-search-evaluation/
 │   └── api.py
 ├── search/
 │   ├── engine.py
-│   └── benchmark.py
+│   ├── benchmark.py
+│   └── annotation_audit.py
 ├── tests/
-│   └── test_hybrid_search.py
+│   ├── test_hybrid_search.py
+│   └── test_annotation_audit.py
 ├── evaluate.py
 ├── Dockerfile
 ├── pyproject.toml

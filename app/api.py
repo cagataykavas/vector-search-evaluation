@@ -25,6 +25,7 @@ class SearchRequest(BaseModel):
     query_embedding: list[float] = Field(min_length=1)
     k: int = Field(default=10, ge=1, le=100)
     candidate_k: int = Field(default=50, ge=1, le=1000)
+    include_fusion_evidence: bool = False
 
 
 class QueryInput(BaseModel):
@@ -85,7 +86,7 @@ def _engine() -> HybridSearchEngine:
 def hybrid_search(request: SearchRequest) -> dict:
     search_engine = _engine()
     try:
-        hits = search_engine.search(
+        hits, fusion_evidence = search_engine.search_with_evidence(
             query_text=request.query_text,
             query_embedding=request.query_embedding,
             k=request.k,
@@ -93,7 +94,10 @@ def hybrid_search(request: SearchRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"hits": search_engine.documents_for_hits(hits)}
+    response = {"hits": search_engine.documents_for_hits(hits)}
+    if request.include_fusion_evidence:
+        response["fusion_evidence"] = [asdict(item) for item in fusion_evidence]
+    return response
 
 
 @app.post("/benchmark")

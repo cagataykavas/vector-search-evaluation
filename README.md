@@ -61,6 +61,10 @@ The service accepts embeddings rather than downloading an embedding model so the
 ### Hybrid RRF
 
 The top candidate lists from BM25 and dense retrieval are fused by reciprocal rank.
+Set `include_fusion_evidence` on the search request to receive per-source ranks and exact RRF
+contributions for every returned document. The default response remains unchanged. See
+[`docs/rrf-fusion-evidence.md`](docs/rrf-fusion-evidence.md) for the evidence contract and
+limitations.
 
 ### Evaluation
 

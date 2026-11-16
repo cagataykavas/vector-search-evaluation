@@ -4,7 +4,7 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from math import log
+from math import isfinite, log
 
 import numpy as np
 
@@ -25,6 +25,22 @@ class SearchHit:
     score: float
     rank: int
     source: str
+
+
+@dataclass(frozen=True)
+class FusionContribution:
+    source: str
+    rank: int
+    rrf_score: float
+    normalized_source_score: float
+
+
+@dataclass(frozen=True)
+class FusionEvidence:
+    doc_id: str
+    fused_score: float
+    tie_break_score: float
+    contributions: tuple[FusionContribution, ...]
 
 
 def tokenize(text: str) -> list[str]:
@@ -122,23 +138,93 @@ def reciprocal_rank_fusion(
     k: int = 10,
     constant: int = 60,
 ) -> list[SearchHit]:
+    hits, _ = reciprocal_rank_fusion_with_evidence(rankings, k=k, constant=constant)
+    return hits
+
+
+def reciprocal_rank_fusion_with_evidence(
+    rankings: Iterable[Iterable[SearchHit]],
+    *,
+    k: int = 10,
+    constant: int = 60,
+) -> tuple[list[SearchHit], list[FusionEvidence]]:
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer")
+    if isinstance(constant, bool) or not isinstance(constant, int) or constant < 1:
+        raise ValueError("constant must be a positive integer")
+
     scores: defaultdict[str, float] = defaultdict(float)
     score_tiebreakers: defaultdict[str, float] = defaultdict(float)
-    for ranking in rankings:
+    contributions: defaultdict[str, list[FusionContribution]] = defaultdict(list)
+    seen_sources: set[str] = set()
+    for ranking_index, ranking in enumerate(rankings):
         materialized = list(ranking)
+        if not materialized:
+            continue
+        if any(
+            not isinstance(hit.source, str)
+            or not hit.source
+            or hit.source != hit.source.strip()
+            for hit in materialized
+        ):
+            raise ValueError(f"ranking {ranking_index} sources must be non-empty trimmed strings")
+        sources = {hit.source for hit in materialized}
+        if len(sources) != 1 or not next(iter(sources)):
+            raise ValueError(f"ranking {ranking_index} must have one non-empty source")
+        source = next(iter(sources))
+        if source in seen_sources:
+            raise ValueError(f"source {source!r} appears in more than one ranking")
+        seen_sources.add(source)
+        doc_ids = [hit.doc_id for hit in materialized]
+        if any(
+            not isinstance(doc_id, str) or not doc_id or doc_id != doc_id.strip()
+            for doc_id in doc_ids
+        ) or len(doc_ids) != len(set(doc_ids)):
+            raise ValueError(f"ranking {source!r} must contain unique non-empty document IDs")
+        ranks = [hit.rank for hit in materialized]
+        if any(isinstance(rank, bool) or not isinstance(rank, int) for rank in ranks):
+            raise ValueError(f"ranking {source!r} ranks must be integers")
+        if set(ranks) != set(range(1, len(ranks) + 1)):
+            raise ValueError(f"ranking {source!r} ranks must be contiguous from 1")
+        if any(
+            isinstance(hit.score, bool)
+            or not isinstance(hit.score, (int, float))
+            or not isfinite(hit.score)
+            for hit in materialized
+        ):
+            raise ValueError(f"ranking {source!r} scores must be finite numbers")
         scale = max((abs(hit.score) for hit in materialized), default=0.0)
         for hit in materialized:
-            scores[hit.doc_id] += 1.0 / (constant + hit.rank)
-            if scale > 0:
-                score_tiebreakers[hit.doc_id] += hit.score / scale
+            rrf_score = 1.0 / (constant + hit.rank)
+            normalized_score = hit.score / scale if scale > 0 else 0.0
+            scores[hit.doc_id] += rrf_score
+            score_tiebreakers[hit.doc_id] += normalized_score
+            contributions[hit.doc_id].append(
+                FusionContribution(
+                    source=source,
+                    rank=hit.rank,
+                    rrf_score=rrf_score,
+                    normalized_source_score=normalized_score,
+                )
+            )
     ordered = sorted(
         scores.items(),
         key=lambda item: (-item[1], -score_tiebreakers[item[0]], item[0]),
     )[:k]
-    return [
+    hits = [
         SearchHit(doc_id=doc_id, score=score, rank=rank, source="rrf")
         for rank, (doc_id, score) in enumerate(ordered, start=1)
     ]
+    evidence = [
+        FusionEvidence(
+            doc_id=doc_id,
+            fused_score=score,
+            tie_break_score=score_tiebreakers[doc_id],
+            contributions=tuple(sorted(contributions[doc_id], key=lambda item: item.source)),
+        )
+        for doc_id, score in ordered
+    ]
+    return hits, evidence
 
 
 class HybridSearchEngine:
@@ -158,9 +244,25 @@ class HybridSearchEngine:
         k: int = 10,
         candidate_k: int = 50,
     ) -> list[SearchHit]:
+        hits, _ = self.search_with_evidence(
+            query_text=query_text,
+            query_embedding=query_embedding,
+            k=k,
+            candidate_k=candidate_k,
+        )
+        return hits
+
+    def search_with_evidence(
+        self,
+        *,
+        query_text: str,
+        query_embedding: Iterable[float],
+        k: int = 10,
+        candidate_k: int = 50,
+    ) -> tuple[list[SearchHit], list[FusionEvidence]]:
         lexical = self.bm25.search(query_text, k=candidate_k)
         dense = self.dense.search(query_embedding, k=candidate_k)
-        return reciprocal_rank_fusion((lexical, dense), k=k)
+        return reciprocal_rank_fusion_with_evidence((lexical, dense), k=k)
 
     def documents_for_hits(self, hits: Iterable[SearchHit]) -> list[dict]:
         return [

@@ -70,6 +70,42 @@ The repository calculates:
 - **MRR** — how early the first relevant result appeared;
 - **NDCG@K** — ranking quality with logarithmic position discount.
 
+### Judgment coverage gate
+
+Relevance metrics are easy to misread when the annotation pool is shallow. A document absent
+from qrels may be irrelevant, or it may simply never have been judged. The bundled release gate
+measures the fraction of each top-K ranking covered by explicit positive **or negative** judgments
+before ranking metrics are trusted.
+
+```bash
+judgment-coverage-audit judgment-coverage.json --output coverage-report.json
+```
+
+The input separates rankings from the complete set of judged document IDs:
+
+```json
+{
+  "queries": [
+    {
+      "query_id": "q-1",
+      "ranking": ["doc-1", "doc-2", "doc-3"],
+      "judged_doc_ids": ["doc-1", "doc-2", "doc-3"]
+    }
+  ],
+  "policy": {
+    "k": 3,
+    "min_mean_judged_fraction": 0.8,
+    "low_coverage_threshold": 0.5,
+    "max_low_coverage_rate": 0.1
+  }
+}
+```
+
+Accepted, policy-rejected and malformed artifacts exit with codes `0`, `2` and `3`. Reports include
+aggregate coverage, hashed query references, bounded per-query counts and a canonical evidence
+digest. Coverage is an admission check, not a relevance score: a fully judged pool can still contain
+incorrect or biased labels, and thresholds must be calibrated to the benchmark's pooling process.
+
 ## Run the API
 
 ```bash

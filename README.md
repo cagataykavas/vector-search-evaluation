@@ -54,7 +54,7 @@ A readable implementation with:
 - cosine similarity;
 - vector normalization;
 - embedding-dimension validation;
-- top-K ranking.
+- top-K ranking with document-ID tie-breaking for order-independent exact-score ties.
 
 The service accepts embeddings rather than downloading an embedding model so the retrieval engine remains provider-independent. It can sit behind OpenAI, sentence-transformers, Vertex AI, Bedrock or any custom encoder.
 

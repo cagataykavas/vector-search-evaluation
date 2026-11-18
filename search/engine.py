@@ -104,7 +104,8 @@ class DenseIndex:
             raise ValueError(f"query embedding must have dimension {self.dimension}")
         query = query / max(float(np.linalg.norm(query)), 1e-12)
         scores = self.matrix @ query
-        order = np.argsort(-scores)[:k]
+        document_ids = np.asarray([document.doc_id for document in self.documents], dtype=str)
+        order = np.lexsort((document_ids, -scores))[:k]
         return [
             SearchHit(
                 doc_id=self.documents[int(index)].doc_id,

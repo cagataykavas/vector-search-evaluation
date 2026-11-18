@@ -1,7 +1,13 @@
 from fastapi.testclient import TestClient
 
 import app.api as api_module
-from search.engine import SearchHit, reciprocal_rank_fusion
+from search.engine import (
+    DenseIndex,
+    Document,
+    HybridSearchEngine,
+    SearchHit,
+    reciprocal_rank_fusion,
+)
 
 
 def documents() -> list[dict]:
@@ -96,3 +102,41 @@ def test_rrf_uses_source_scores_to_break_rank_ties() -> None:
 
     assert [hit.doc_id for hit in hits] == ["b", "a"]
     assert hits[0].score == hits[1].score
+
+
+def test_dense_ties_are_independent_of_corpus_order() -> None:
+    rows = [
+        Document("z-document", "z", (1.0, 0.0)),
+        Document("a-document", "a", (1.0, 0.0)),
+        Document("m-document", "m", (0.0, 1.0)),
+    ]
+
+    forward = DenseIndex(rows).search((1.0, 0.0), k=3)
+    reverse = DenseIndex(reversed(rows)).search((1.0, 0.0), k=3)
+
+    assert [hit.doc_id for hit in forward] == ["a-document", "z-document", "m-document"]
+    assert [hit.doc_id for hit in reverse] == [hit.doc_id for hit in forward]
+    assert [hit.rank for hit in forward] == [1, 2, 3]
+
+
+def test_hybrid_results_are_stable_when_dense_candidates_tie() -> None:
+    rows = [
+        Document("doc-b", "unmatched beta", (1.0, 0.0)),
+        Document("doc-a", "unmatched alpha", (1.0, 0.0)),
+    ]
+
+    forward = HybridSearchEngine(rows).search(
+        query_text="query-with-no-lexical-match",
+        query_embedding=(1.0, 0.0),
+        k=2,
+        candidate_k=2,
+    )
+    reverse = HybridSearchEngine(reversed(rows)).search(
+        query_text="query-with-no-lexical-match",
+        query_embedding=(1.0, 0.0),
+        k=2,
+        candidate_k=2,
+    )
+
+    assert [hit.doc_id for hit in forward] == ["doc-a", "doc-b"]
+    assert [hit.doc_id for hit in reverse] == [hit.doc_id for hit in forward]
